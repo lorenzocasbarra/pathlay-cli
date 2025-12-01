@@ -12,7 +12,7 @@ use PathLayDBs qw(metaDB);
 $Data::Dumper::Indent = 1;
 
 # general settings
-my $debug = 1;
+my $debug = 0;
 my $organism_code = "hsa";
 my $db = "kegg";
 my $gmt_file = "${organism_code}.${db}.meta.gmt";
@@ -22,11 +22,11 @@ my $nodes_folder = "$FindBin::Bin/pathlay_data/${organism_code}/maps/${db}/";
 
 # data loading for mapping
 # metadata and cross ref
-my $metadata_file = "metadata_lipids.tsv";
+my $metadata_file = "data/metadata_lipids.tsv";
 my $lipids = load_metadata(file => $metadata_file);
 
 # de data (based on metadata content)
-my $de_file = "de_lipids.tsv";
+my $de_file = "data/de_lipids.tsv";
 $lipids = load_de_data(file => $de_file, metadata => $lipids);
 
 # kegg meta gmt loading
@@ -38,6 +38,7 @@ my $pathways = {};
 foreach my $pID (sort keys %{$gmt->{pathway2meta}}) {
 	say "${pID} - $gmt->{metadata}->{id2name}->{$pID}"  if $debug;
 	my $node_file = "${nodes_folder}${pID}.nodes";
+
 	my @nodes = load_nodes(file => $node_file, data => $lipids);
 	foreach my $node (@nodes) {
 		load_de_on_node(node => $node, data => $lipids);
@@ -59,16 +60,44 @@ foreach my $pID (sort keys %{$gmt->{pathway2meta}}) {
 	foreach my $coord (keys %$complexes_index) {
 		my $counts = {
 			dev_down => 0,
-			dev_up => 0
+			dev_up => 0,
+			up =>{
+				SFA => 0,
+				MUFA => 0,
+				PUFA => 0
+			},
+			dn => {
+				SFA => 0,
+				MUFA => 0,
+				PUFA => 0
+			}
 		};
 		foreach my $n (keys %{$complexes_index->{$coord}}) {
 			foreach my $lipid (keys %{$complexes_index->{$coord}->{$n}->{lipids}}) {
 				my $lipidObj = $complexes_index->{$coord}->{$n}->{lipids}->{$lipid};
-				$counts->{dev_up}++ if ($lipidObj->{dev} > 0);
-				$counts->{dev_down}++ if ($lipidObj->{dev} < 0);
+				if ($lipidObj->{dev} > 0) {
+					$counts->{dev_up}++;
+					$counts->{up}->{$lipidObj->{fa_type}}++;
+				};
+				if ($lipidObj->{dev} < 0) {
+					$counts->{dev_down}++;
+					$counts->{dn}->{$lipidObj->{fa_type}}++;
+				}
 			}
 		}
+
 		my @counts_dev = ($counts->{dev_up},$counts->{dev_down});
+		my @counts_type_1 = (
+			$counts->{up}->{SFA},
+			$counts->{up}->{MUFA},
+			$counts->{up}->{PUFA}
+		);
+		my @counts_type_2 = (
+			$counts->{dn}->{PUFA},
+			$counts->{dn}->{MUFA},
+			$counts->{dn}->{SFA}
+		);
+
 		my ($x,$y) = split(",",$coord);
 		say("Complex Coords: x:$x - y:$y") if ($debug);
 
@@ -78,7 +107,13 @@ foreach my $pID (sort keys %{$gmt->{pathway2meta}}) {
 		my $white = $graph->colorAllocate(255,255,255);
 		my $red = $graph->colorAllocate(255, 0, 0);
 		my $green = $graph->colorAllocate(0,255,0);
+		my $yellow = $graph->colorAllocate(255,255,0);
+		my $cyan = $graph->colorAllocate(0,255,255);
+		my $pink = $graph->colorAllocate(255,192,203);
+
 		my @colors_dev = ($red,$green);
+		my @colors_type_1 = ($yellow,$cyan,$pink);
+		my @colors_type_2 = ($pink,$cyan,$yellow);
 
 		$graph->transparent($white);
 		$graph->interlaced('true');
@@ -91,7 +126,34 @@ foreach my $pID (sort keys %{$gmt->{pathway2meta}}) {
 			diameter1 => 20,
 			diameter2 => 30,
 			counts => \@counts_dev,
-			colors => \@colors_dev
+			colors => \@colors_dev,
+			theta_start => 180 
+		);
+
+		$graph = sliced_crown_arc(
+			graph => $graph,
+			centerX => $graph_size/2,
+			centerY => $graph_size/2,
+			diameter1 => 40,
+			diameter2 => 50,
+			counts => \@counts_type_1,
+			colors => \@colors_type_1,
+			arc_start => 210,
+			arc_end => 330,
+			theta_start => 210
+		);
+
+		$graph = sliced_crown_arc(
+			graph => $graph,
+			centerX => $graph_size/2,
+			centerY => $graph_size/2,
+			diameter1 => 40,
+			diameter2 => 50,
+			counts => \@counts_type_2,
+			colors => \@colors_type_2,
+			arc_start => 30,
+			arc_end => 150,
+			theta_start => 30
 		);
 
 		# Add text (optional)
@@ -104,7 +166,7 @@ foreach my $pID (sort keys %{$gmt->{pathway2meta}}) {
 	open my $out, '>:raw', "results/hsa${pImg}.png" or die "Cannot write output.png: $!";
 	print $out $bg->png;
 	close $out;
-	<STDIN>;
+	# <STDIN>;
 }
 
 sub load_metadata {
@@ -235,7 +297,8 @@ sub make_complexes {
 sub sliced_crown_arc {
 	my %args = (
 		theta_start => 0,
-		theta_end => 360,
+		arc_start => 0,
+		arc_end => 360,
 		@_
 	);
 	my $graph = $args{graph};
@@ -245,42 +308,65 @@ sub sliced_crown_arc {
 	my $d2 = $args{diameter2};
 	my @counts = @{$args{counts}};
 	my @colors = @{$args{colors}};
+	my $arc_start = $args{arc_start};
+	my $arc_end = $args{arc_end};
 	my $theta_start = $args{theta_start};
-	my $theta_end = $args{theta_end};
 
 
 	
 	my $black = $graph->colorAllocate(0,0,0);
 
-	my $total_counts = sum(@counts);
+	say("counts:") if ($debug);
+	say Dumper \@counts if ($debug);
+	my $total  = 0;
+	$total = sum(@counts);
+	return ($graph) if ($total == 0);
+	my @raw;
 	my @xcents;
-	foreach my $count (@counts) {
-		push(@xcents,($count/$total_counts)*100);
-	}
-	if ($xcents[0] > $xcents[1]) {
-		$xcents[0] = ceil($xcents[0]);
-		$xcents[1] = floor($xcents[1]);
-	} else {
-		$xcents[0] = floor($xcents[0]);
-		$xcents[1] = ceil($xcents[1]);
+
+	# compute raw percentages and collect fractional parts
+	for my $c (@counts) {
+		my $p = ($c / $total) * 100;
+		push(@raw,$p);
+		push(@xcents,floor($p));
 	}
 
-	if ($xcents[0] < 20) {
-		$xcents[0] = 20;
-		$xcents[1] = 80;
-	}
-	if ($xcents[1] < 20) {
-		$xcents[1] = 20;
-		$xcents[0] = 80;
+	my $sum = 0; 
+	$sum += $_ for @xcents;
+	my $missing = 100 - $sum;
+
+	my @frac = map { $_ - floor($_) } @raw;
+
+	while ($missing > 0) {
+		my ($idx) = sort { $frac[$b] <=> $frac[$a] } 0..$#xcents;
+		$xcents[$idx]++;
+		$frac[$idx] = 0;
+		$missing--;
 	}
 
-	say("  up: ${xcents[0]}% - dn: ${xcents[1]}%")  if $debug;
-	my $theta0 = min($theta_start,$theta_end);
-	my $previous_theta = $theta0;
-	my @thetas = ($theta0);
-	my $invert;
+	# apply minimum % rule (20/80)
+	my $min_pct = 20;
 
-	my $theta_slice = abs($theta_end - $theta_start);
+	my $needs_fix = 1;
+	while ($needs_fix) {
+		$needs_fix = 0;
+
+		for my $i (0..$#xcents) {
+			if ($xcents[$i] < $min_pct && $xcents[$i] > 0) {
+				my $delta = $min_pct - $xcents[$i];
+				$xcents[$i] = $min_pct;
+				my ($j) = sort { $xcents[$b] <=> $xcents[$a] } grep { $_ != $i } 0..$#xcents;
+				$xcents[$j] -= $delta;
+				$needs_fix = 1;
+			}
+		}
+	}
+	say("percentages:") if $debug;
+	say Dumper \@xcents if $debug;
+	my $previous_theta = $theta_start;
+	my @thetas = (($theta_start/180)*3.14);
+
+	my $theta_slice = abs($arc_end - $arc_start);
 	foreach my $xcent (@xcents) {
 		my $theta = (($theta_slice * $xcent) / 100) + $previous_theta;
 		$previous_theta = $theta;
@@ -288,29 +374,42 @@ sub sliced_crown_arc {
 		push(@thetas,$theta_r)
 	}
 
-	$previous_theta = $theta0;
+	$previous_theta = $thetas[0];
 	my $n = 0;
-	$graph->arc($cx,$cy,$d1,$d1,$theta_start,$theta_end,$black);
-	$graph->arc($cx,$cy,$d2,$d2,$theta_start,$theta_end,$black);
-	say Dumper \@thetas;
+	$graph->arc($cx,$cy,$d1,$d1,$arc_start,$arc_end,$black);
+	$graph->arc($cx,$cy,$d2,$d2,$arc_start,$arc_end,$black);
+	$graph->line(
+		$cx+($d1 / 2)* cos($thetas[0]),
+		$cy+($d1 / 2)* sin($thetas[0]),
+		$cx+($d2 / 2)* cos($thetas[0]),
+		$cy+($d2 / 2)* sin($thetas[0]),
+		$black
+	);
+	# say Dumper \@thetas;
 	foreach my $theta (@thetas) {
-		my $p1y = $cy-($d1 / 2)* sin($theta);
-		my $p1x = $cx-($d1 / 2)* cos($theta);
-		my $p2x = $cx-($d2 / 2)* cos($theta);
-		my $p2y = $cy-($d2 / 2)* sin($theta);
+		if ($xcents[$n] == 0) {
+			$n++;
+			next;
+		}
+		my $p1y = $cy+($d1 / 2)* sin($theta);
+		my $p1x = $cx+($d1 / 2)* cos($theta);
+		my $p2x = $cx+($d2 / 2)* cos($theta);
+		my $p2y = $cy+($d2 / 2)* sin($theta);
 		say("  radiant: $theta") if $debug;
 		say("  p1x: ${p1x} | p1y: ${p1y} | p2y: ${p2y}") if $debug;
 
 		$graph->line($p1x, $p1y, $p2x, $p2y, $black);
+		if ($theta > $thetas[0]) {
 
-		if ($theta > $theta0) {
 			my $dm = $d1+(($d2-$d1)/2);
-			my $theta_m = ($theta - $previous_theta)/2;
-			my $pmx = $cx-($dm / 2)* cos($theta_m);
-			my $pmy = $cy-($dm / 2)* sin($theta_m);
-			if ($theta > 3.14) {
-				$pmy = $cy+($cy-$pmy);
-			}
+
+			my $theta_m = $previous_theta+(($theta - $previous_theta)/2);
+			my $pmx = $cx+($dm / 2)* cos($theta_m);
+			my $pmy = $cy+($dm / 2)* sin($theta_m);
+			# if (($theta - $previous_theta) >= 3.14) {
+			# 	$pmy = $cy+($cy-$pmy);
+			# }
+			say("filling at ${pmx},${pmy} at angle ${theta_m}") if $debug;
 			$graph->fill($pmx,$pmy,$colors[$n]);
 			$n++;
 		}
