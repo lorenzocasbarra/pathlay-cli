@@ -4,6 +4,7 @@ use v5.10.0;
 use FindBin;
 use Data::Dumper;
 use GD;
+use GD::Text::Wrap;
 use POSIX;
 use Storable qw(dclone);
 use List::Util qw(min max sum);
@@ -417,4 +418,200 @@ sub sliced_crown_arc {
 	}
 	
 	return($graph);
+}
+
+sub count_devs {
+
+	my %args = (
+		complex_index => {},
+		@_
+	);
+
+	my $complexes_index = $args{complex_index};
+
+	my $counts = {
+		dev_down => 0,
+		dev_up => 0,
+		up =>{
+			SFA => 0,
+			MUFA => 0,
+			PUFA => 0
+		},
+		dn => {
+			SFA => 0,
+			MUFA => 0,
+			PUFA => 0
+		}
+	};
+
+	foreach my $n (sort keys %{$complexes_index}) {
+		foreach my $lipid (sort keys %{$complexes_index->{$n}->{lipids}}) {
+			my $lipidObj = $complexes_index->{$n}->{lipids}->{$lipid};
+			if ($lipidObj->{dev} > 0) {
+				$counts->{dev_up}++;
+				$counts->{up}->{$lipidObj->{fa_type}}++;
+			};
+			if ($lipidObj->{dev} < 0) {
+				$counts->{dev_down}++;
+				$counts->{dn}->{$lipidObj->{fa_type}}++;
+			}
+		}
+	}
+	return($counts);
+}
+
+
+sub generate_complex {
+	my %args = (
+		id => "hsa_n",
+		size => 125,
+		counts_dev => [],
+		counts_type_up => [],
+		counts_type_down => [], 
+		@_
+	);
+	my $id = $args{id};
+	my $graph_size = $args{size};
+	my @counts_dev = @{$args{counts_dev}};
+	my @counts_type_up = @{$args{counts_type_up}};
+	my @counts_type_down = @{$args{counts_type_down}};
+
+	my $graph = new GD::Image($graph_size,$graph_size);
+
+	my $white = $graph->colorAllocate(255,255,255);
+	my $black = $graph->colorAllocate(0,0,0);
+	my $red = $graph->colorAllocate(255, 0, 0);
+	my $green = $graph->colorAllocate(0,255,0);
+	my $yellow = $graph->colorAllocate(255,255,0);
+	my $cyan = $graph->colorAllocate(0,255,255);
+	my $pink = $graph->colorAllocate(255,192,203);
+
+	my @colors_dev = ($red,$green);
+	my @colors_type_1 = ($yellow,$cyan,$pink);
+	my @colors_type_2 = ($pink,$cyan,$yellow);
+
+	$graph->transparent($white);
+	$graph->interlaced('true');
+	$graph->filledRectangle(0, 0, $graph_size, $graph_size, $white);
+	# $graph->rectangle(0, 0, $graph_size-1, $graph_size-1, $red);
+
+	$graph = sliced_crown_arc(
+		graph => $graph,
+		centerX => $graph_size/2,
+		centerY => $graph_size/2,
+		diameter1 => 20,
+		diameter2 => 30,
+		counts => \@counts_dev,
+		colors => \@colors_dev,
+		theta_start => 180 
+	);
+
+	$graph = sliced_crown_arc(
+		graph => $graph,
+		centerX => $graph_size/2,
+		centerY => $graph_size/2,
+		diameter1 => 40,
+		diameter2 => 50,
+		counts => \@counts_type_up,
+		colors => \@colors_type_1,
+		arc_start => 210,
+		arc_end => 330,
+		theta_start => 210
+	);
+
+	$graph = sliced_crown_arc(
+		graph => $graph,
+		centerX => $graph_size/2,
+		centerY => $graph_size/2,
+		diameter1 => 40,
+		diameter2 => 50,
+		counts => \@counts_type_down,
+		colors => \@colors_type_2,
+		arc_start => 30,
+		arc_end => 150,
+		theta_start => 30
+	);
+	my $line = $id;
+	my $line_size = length($line) * gdMediumBoldFont->width;
+	$graph->string(gdMediumBoldFont, $graph_size/2-$line_size/2, $graph_size/2+30, $line, $black);
+	return($graph);
+}
+
+
+sub text_box {
+	my %args = (
+		graph => {},
+		x => 0,
+		y => 0,
+		max_width => 200,
+		padding => 10,
+		line_space => 2,
+		paragraph_space => 6,
+		title_font => gdMediumBoldFont,
+		body_font => gdSmallFont,
+		font_size => 10,
+		title => "Title goes here",
+		body => "Body starts here",
+		@_
+	);
+	my $graph = 					$args{graph};
+	my $max_width = 			$args{max_width};
+	my $x =								$args{x};
+	my $y = 							$args{y};
+	my $padding = 				$args{padding};
+	my $line_space = 			$args{line_space};
+	my $paragraph_space = $args{paragraph_space};
+	my $title_font =			$args{title_font};
+	my $body_font =				$args{body_font};
+	my $font_size = 			$args{font_size};
+	my $title =						$args{title};
+	my $body =						$args{body};
+
+	my $black = $graph->colorAllocate(0,0,0);
+
+	my $occupied_width;
+	my $occupied_height;
+
+
+	my $text_area_width = $max_width - (2 * $padding);
+	my $title_x = $x+$padding;
+	my $title_y = $y+$padding;
+
+	my $title_wrap = GD::Text::Wrap->new(
+		$graph,
+    width     => $max_width - (2 * $padding),
+    color     => $black,
+    line_space => $line_space,
+    text      => $title,
+		align => 'center',
+		preserve_nl => 1
+	);
+
+	$title_wrap->set_font($title_font, $font_size);
+	# $title_wrap->font_path($FONT_PATH);
+
+	my ($t_left, $t_top, $t_right, $t_bottom) = $title_wrap->get_bounds($title_x, $title_y);
+	
+	my $body_start_y = $t_bottom + $paragraph_space;
+	my $body_x = $x + $padding;
+	my $body_y = $body_start_y;
+
+	my $body_wrap = GD::Text::Wrap->new(
+		$graph,
+		width     => $text_area_width,
+		color     => $black,
+		line_space => $line_space,
+		text      => $body,
+		align => 'left',
+		preserve_nl => 1
+	);
+	$body_wrap->set_font($body_font, $font_size);
+	# $body_wrap->font_path($FONT_PATH);
+
+	my ($b_left, $b_top, $b_right, $b_bottom) = $body_wrap->get_bounds($body_x, $body_y);
+	
+	$occupied_width = $max_width;
+	$occupied_height = ($b_bottom - $y) + $padding;
+
+	return($title_wrap,$body_wrap,$occupied_width,$occupied_height);
 }
